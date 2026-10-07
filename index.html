@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>TeslaSound — Engine Sound Prototype</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="theme-color" content="#0b0d10">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<style>
+  :root { color-scheme: dark; }
+  body {
+    background: #0b0d10;
+    color: #e8e8e8;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 32px 20px 80px;
+  }
+  h1 { font-size: 1.4rem; margin-bottom: 4px; }
+  p.sub { color: #999; margin-top: 0; margin-bottom: 32px; font-size: 0.9rem; }
+  .panel {
+    background: #15181c;
+    border: 1px solid #262b31;
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 20px;
+  }
+  .rpm-readout {
+    font-size: 3rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    margin: 0;
+  }
+  .rpm-readout span { font-size: 1.1rem; color: #888; font-weight: 400; }
+  .telemetry {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin: 12px 0 0;
+    text-align: center;
+    font-size: 0.8rem;
+    color: #999;
+  }
+  .telemetry b { display: block; font-size: 1.1rem; color: #e8e8e8; font-variant-numeric: tabular-nums; }
+  label { display: block; margin: 18px 0 6px; font-size: 0.85rem; color: #aaa; }
+  select, input[type="range"] { width: 100%; accent-color: #e63946; }
+  select {
+    background: #1f2429; color: #e8e8e8; border: 1px solid #333;
+    border-radius: 8px; padding: 10px; font-size: 0.95rem;
+  }
+  .row { display: flex; gap: 12px; margin-top: 16px; }
+  button {
+    flex: 1; background: #1f2429; color: #e8e8e8; border: 1px solid #333;
+    border-radius: 8px; padding: 12px; font-size: 0.95rem; cursor: pointer;
+    touch-action: none; user-select: none;
+  }
+  button:active { background: #2a3038; }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button.primary { background: #e63946; border-color: #e63946; color: white; font-weight: 600; }
+  button.toggled { background: #2e7d32; border-color: #2e7d32; color: white; }
+  .pedals { display: flex; gap: 12px; margin-top: 10px; }
+  .pedal {
+    flex: 1; height: 140px; background: #1f2429; border: 1px solid #333;
+    border-radius: 10px; display: flex; align-items: center; justify-content: center;
+    color: #777; font-size: 0.9rem; user-select: none; touch-action: none;
+  }
+  .pedal.gas.active { background: #e63946; color: white; }
+  .pedal.brake.active { background: #3a6ea5; color: white; }
+  .status { font-size: 0.8rem; color: #888; text-align: center; margin-top: 8px; }
+  .hint { font-size: 0.75rem; color: #666; text-align: center; margin-top: 10px; }
+  details summary { cursor: pointer; color: #aaa; font-size: 0.85rem; }
+  details .debug {
+    margin-top: 10px; font-size: 0.72rem; color: #666;
+    font-family: ui-monospace, monospace; white-space: pre-wrap;
+  }
+</style>
+</head>
+<body>
+  <h1>TeslaSound</h1>
+  <p class="sub">Physical-modeling combustion engine sound (adapted from Engine_Sim — firing-geometry synthesis + simulated drivetrain). Drive it with on-screen pedals, or your phone's GPS + motion for real driving.</p>
+
+  <div class="panel">
+    <p class="rpm-readout"><span id="rpmValue">0</span><span> RPM</span></p>
+    <div class="telemetry">
+      <div><b id="gearValue">N</b>gear</div>
+      <div><b id="speedValue">0</b>km/h</div>
+      <div><b id="loadValue">0%</b>load</div>
+    </div>
+
+    <label for="engineSelect">Engine</label>
+    <select id="engineSelect"></select>
+
+    <label for="vehicleSelect">Vehicle</label>
+    <select id="vehicleSelect"></select>
+
+    <div class="pedals">
+      <div class="pedal brake" id="brakePedal">brake</div>
+      <div class="pedal gas" id="gasPedal">gas</div>
+    </div>
+    <p class="hint">hold pedals, or use arrow keys / W (gas) S (brake) on desktop</p>
+
+    <div class="row">
+      <button id="enableMotionBtn">Enable GPS + Motion</button>
+      <button id="inputModeBtn" disabled>Manual</button>
+    </div>
+    <p class="hint" id="motionHint">phone sensors drive the engine from your real driving — mount the phone, screen on, Bluetooth audio to the car</p>
+
+    <div class="row">
+      <button id="shiftDownBtn">Shift ↓</button>
+      <button id="autoShiftBtn" class="toggled">Auto: ON</button>
+      <button id="shiftUpBtn">Shift ↑</button>
+    </div>
+    <div class="row">
+      <button id="neutralBtn">Neutral</button>
+    </div>
+    <p class="hint">Neutral disengages the gearbox and turns off auto-shift — rev freely with no load, Shift ↑ to go back in gear</p>
+
+    <div class="row">
+      <button id="startBtn" class="primary">Hold to Start</button>
+      <button id="stopBtn">Stop Engine</button>
+    </div>
+    <p class="hint">hold Start like a real start button — the starter has to crank it over before it catches</p>
+    <p class="status" id="status">engine off</p>
+  </div>
+
+  <div class="panel">
+    <label for="masterVol">Master volume: <span id="masterVolVal">70%</span></label>
+    <input type="range" id="masterVol" min="0" max="100" step="1" value="70">
+
+    <details>
+      <summary>Telemetry / debug</summary>
+      <div class="debug" id="debug"></div>
+    </details>
+  </div>
+
+  <div class="panel">
+    <details>
+      <summary>Sound tuning</summary>
+      <div id="toneControls"></div>
+    </details>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

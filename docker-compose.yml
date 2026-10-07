@@ -1,0 +1,7 @@
+services:
+  teslasound:
+    build: .
+    container_name: teslasound
+    restart: unless-stopped
+    ports:
+      - "8420:8420"
