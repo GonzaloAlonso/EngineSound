@@ -19,6 +19,13 @@
     max-width: 640px;
     margin: 0 auto;
     padding: 32px 20px 80px;
+    /* iOS Safari's long-press text-selection/callout ("Copy", magnifier
+       loupe) fires on buttons and pedals despite touch-action/user-select —
+       it's a separate WebKit behavior with its own property. */
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
   }
   h1 { font-size: 1.4rem; margin-bottom: 4px; }
   p.sub { color: #999; margin-top: 0; margin-bottom: 32px; font-size: 0.9rem; }
@@ -57,7 +64,7 @@
   button {
     flex: 1; background: #1f2429; color: #e8e8e8; border: 1px solid #333;
     border-radius: 8px; padding: 12px; font-size: 0.95rem; cursor: pointer;
-    touch-action: none; user-select: none;
+    touch-action: none;
   }
   button:active { background: #2a3038; }
   button:disabled { opacity: 0.45; cursor: default; }
@@ -67,7 +74,7 @@
   .pedal {
     flex: 1; height: 140px; background: #1f2429; border: 1px solid #333;
     border-radius: 10px; display: flex; align-items: center; justify-content: center;
-    color: #777; font-size: 0.9rem; user-select: none; touch-action: none;
+    color: #777; font-size: 0.9rem; touch-action: none;
   }
   .pedal.gas.active { background: #e63946; color: white; }
   .pedal.brake.active { background: #3a6ea5; color: white; }
