@@ -1,0 +1,10 @@
+services:
+  teslasound:
+    # Pulls the prebuilt image from GHCR (published by
+    # .github/workflows/docker-publish.yml on every push to main) instead of
+    # building from source — Portainer just pulls and runs it.
+    image: ghcr.io/gonzaloalonso/enginesound:latest
+    container_name: teslasound
+    restart: unless-stopped
+    ports:
+      - "8420:8420"
