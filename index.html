@@ -164,6 +164,10 @@
       <label for="topSpeedInput">Top speed (km/h)</label>
       <input type="number" id="topSpeedInput" min="80" max="400" step="1" placeholder="auto (from drag/power)">
 
+      <label for="zeroToHundredInput">0-100 km/h (seconds)</label>
+      <input type="number" id="zeroToHundredInput" min="2" max="30" step="0.1" placeholder="auto (flat estimate)">
+      <p class="hint" style="margin-top:6px">Used in Auto (GPS) mode: how hard the real car is accelerating right now gets compared against what it's <em>capable of</em> at the current speed (fast off the line, tapering off like a real power curve) to infer throttle load — not just a flat accelerometer threshold.</p>
+
       <div class="row">
         <button id="applyGearboxBtn">Apply calibration</button>
         <button id="resetGearboxBtn">Reset to auto</button>

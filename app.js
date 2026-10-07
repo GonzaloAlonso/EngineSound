@@ -34,6 +34,7 @@ const debugEl = document.getElementById("debug");
 const toneControlsEl = document.getElementById("toneControls");
 const gearCountInput = document.getElementById("gearCountInput");
 const topSpeedInput = document.getElementById("topSpeedInput");
+const zeroToHundredInput = document.getElementById("zeroToHundredInput");
 const applyGearboxBtn = document.getElementById("applyGearboxBtn");
 const resetGearboxBtn = document.getElementById("resetGearboxBtn");
 const gearboxHint = document.getElementById("gearboxHint");
@@ -150,9 +151,12 @@ function applyInertiaTuning() {
 }
 
 /**
- * Real-car gearbox calibration — reads the Vehicle Calibration panel's own
- * inputs. `null` fields mean "let the engine/vehicle preset decide," same
- * as leaving the input blank.
+ * Real-car calibration — reads the Vehicle Calibration panel's own inputs.
+ * Covers two independent things that both just need "tell it about your
+ * real car": the simulated gearbox (gear count / top speed), and — for
+ * Auto (GPS) mode — the expected-acceleration curve used to infer throttle
+ * load from measured acceleration (see motion.js). `null`/`undefined`
+ * fields mean "let it decide," same as leaving an input blank.
  */
 function currentGearboxTuning() {
   const gears = Number(gearCountInput.value) || undefined;
@@ -160,25 +164,36 @@ function currentGearboxTuning() {
   return gears || topSpeedKmh ? { gears, topSpeedKmh } : null;
 }
 
-function applyGearboxTuning() {
-  if (!sim) return;
-  const tuning = currentGearboxTuning();
-  const geared = sim.setGearboxTuning(tuning);
-  if (!tuning) {
-    gearboxHint.textContent = "reset — using the engine's own default gearbox";
+function applyVehicleCalibration() {
+  const zeroToHundredS = Number(zeroToHundredInput.value) || undefined;
+  motion.setPerformanceCalibration({ zeroToHundredS });
+
+  if (!sim) {
+    gearboxHint.textContent = zeroToHundredS
+      ? `0-100 load curve set (${zeroToHundredS}s) — gearbox applies once the engine's started`
+      : "";
     return;
   }
-  const topRatio = geared.gearRatios[geared.gearRatios.length - 1];
-  const bits = [`${geared.gearRatios.length} gears`, `top gear ratio ${topRatio.toFixed(2)}:1`];
-  if (tuning.topSpeedKmh) bits.push(`redline in top gear at ~${tuning.topSpeedKmh} km/h`);
+  const tuning = currentGearboxTuning();
+  const geared = sim.setGearboxTuning(tuning);
+  const bits = [];
+  if (tuning) {
+    const topRatio = geared.gearRatios[geared.gearRatios.length - 1];
+    bits.push(`${geared.gearRatios.length} gears`, `top gear ratio ${topRatio.toFixed(2)}:1`);
+    if (tuning.topSpeedKmh) bits.push(`redline in top gear at ~${tuning.topSpeedKmh} km/h`);
+  } else {
+    bits.push("gearbox: engine default");
+  }
+  bits.push(zeroToHundredS ? `0-100 load curve: ${zeroToHundredS}s` : "load curve: flat estimate");
   gearboxHint.textContent = `applied — ${bits.join(", ")}`;
 }
 
-applyGearboxBtn.addEventListener("click", applyGearboxTuning);
+applyGearboxBtn.addEventListener("click", applyVehicleCalibration);
 resetGearboxBtn.addEventListener("click", () => {
   gearCountInput.value = "";
   topSpeedInput.value = "";
-  applyGearboxTuning();
+  zeroToHundredInput.value = "";
+  applyVehicleCalibration();
 });
 
 // Cold-start tuning. The engine's own idle governor holds rpm at whatever
@@ -512,7 +527,7 @@ startBtn.addEventListener("pointerdown", async (e) => {
   ensureSim();
   if (!simExisted) {
     applyInertiaTuning();
-    applyGearboxTuning();
+    applyVehicleCalibration();
   }
   EngineSim.preload(audioCtx);
 

@@ -27,6 +27,11 @@
 const GPS_OPTIONS = { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 };
 
 export class MotionInput {
+  // ~35 km/h — below this, most road cars are grip-limited (roughly
+  // constant g off the line), not power-limited. A fixed assumption, not
+  // something a user-supplied 0-100 time can itself determine.
+  static BREAKAWAY_SPEED_MS = 9.7;
+
   constructor() {
     this.supported = {
       geolocation: "geolocation" in navigator,
@@ -44,11 +49,51 @@ export class MotionInput {
     this._onMotion = this._onMotion.bind(this);
     this._emaActivity = 0;
 
-    // Calibration starting points — not measured against a real car, tune
-    // once this is actually ridden with.
+    // Fallback when no performance calibration (see setPerformanceCalibration
+    // below) has been set — a flat, speed-independent guess.
     this.accelForFullThrottle = 2.5; // m/s^2 for 100% virtual throttle
     this.accelForFullBrake = -3.5; // m/s^2 for 100% virtual brake
     this.activitySmoothingBoost = 0.6; // how much the activity gate speeds up the accel smoothing
+
+    this._perf = null; // set by setPerformanceCalibration()
+  }
+
+  /**
+   * Turns a real "0-100 km/h in T seconds" figure into a speed-aware
+   * expected-acceleration-at-full-throttle curve, so throttle load can be
+   * inferred as measured-accel / what-the-car-can-actually-do-here instead
+   * of against one flat number. A real WOT run isn't constant acceleration
+   * — it's roughly grip-limited (~constant g) at low speed, then
+   * power-limited (accel ~ 1/v, since force = power/v) once the tyres stop
+   * being the bottleneck. One data point can't fit an arbitrary curve, but
+   * it CAN fit this two-phase one exactly: fix the breakaway speed as a
+   * reasonable assumption (most road cars run out of grip by ~35 km/h), and
+   * solve the single remaining unknown so the model's own 0-100 time
+   * matches the one given.
+   *
+   * Derivation: phase 1 (0..vb) is constant accel a1, taking t1 = vb/a1.
+   * Phase 2 (vb..vTarget) has a(v) = k/v with k = a1*vb (continuous at vb);
+   * integrating v dv = k dt gives t2 = (vTarget^2 - vb^2) / (2k). Solving
+   * t1 + t2 = T for a1:
+   *   a1 = (vb^2 + vTarget^2) / (2 * vb * T)
+   */
+  setPerformanceCalibration({ zeroToHundredS } = {}) {
+    if (!(zeroToHundredS > 0)) {
+      this._perf = null;
+      return;
+    }
+    const vb = MotionInput.BREAKAWAY_SPEED_MS;
+    const vTarget = 100 / 3.6;
+    const a1 = (vb * vb + vTarget * vTarget) / (2 * vb * zeroToHundredS);
+    this._perf = { vb, a1, k: a1 * vb };
+  }
+
+  /** Expected wide-open-throttle acceleration at `speedMs`, m/s^2. */
+  _expectedFullThrottleAccel(speedMs) {
+    if (!this._perf) return this.accelForFullThrottle; // no calibration — flat fallback
+    const { vb, a1, k } = this._perf;
+    const v = Math.max(0.5, speedMs); // guard the 1/v blow-up near a dead stop
+    return v <= vb ? a1 : k / v;
   }
 
   /** Must be called from a user gesture — iOS requires it for motion. */
@@ -136,7 +181,8 @@ export class MotionInput {
       this.accelMs2 *= 0.9;
     }
     const a = this.accelMs2;
-    const gas = a > 0 ? Math.max(0, Math.min(1, a / this.accelForFullThrottle)) : 0;
+    const fullThrottleAccel = this._expectedFullThrottleAccel(this.speedMs);
+    const gas = a > 0 ? Math.max(0, Math.min(1, a / fullThrottleAccel)) : 0;
     const brake = a < 0 ? Math.max(0, Math.min(1, a / this.accelForFullBrake)) : 0;
     return { gas, brake, speedMs: this.speedMs, gpsFresh: this.gpsFresh };
   }
