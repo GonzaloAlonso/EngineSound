@@ -8,3 +8,16 @@ services:
     restart: unless-stopped
     ports:
       - "8420:8420"
+    networks:
+      # Caddy's `reverse_proxy teslasound:8420` resolves this container by
+      # name, which only works if they're on the same Docker network as
+      # Caddy/jellyfin/visor. Find that network's real name on your server
+      # with: docker inspect jellyfin --format '{{json .NetworkSettings.Networks}}'
+      # then replace CHANGE_ME below with it (and create the stack with
+      # that same value — Portainer won't invent the network for you if
+      # it's external to this stack).
+      - CHANGE_ME
+
+networks:
+  CHANGE_ME:
+    external: true
