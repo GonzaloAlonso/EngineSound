@@ -56,10 +56,11 @@
   .telemetry b { display: block; font-size: 1.1rem; color: #e8e8e8; font-variant-numeric: tabular-nums; }
   label { display: block; margin: 18px 0 6px; font-size: 0.85rem; color: #aaa; }
   select, input[type="range"] { width: 100%; accent-color: #e63946; }
-  select {
+  select, input[type="number"] {
     background: #1f2429; color: #e8e8e8; border: 1px solid #333;
     border-radius: 8px; padding: 10px; font-size: 0.95rem;
   }
+  input[type="number"] { width: 100%; box-sizing: border-box; }
   .row { display: flex; gap: 12px; margin-top: 16px; }
   button {
     flex: 1; background: #1f2429; color: #e8e8e8; border: 1px solid #333;
@@ -149,6 +150,25 @@
     <details>
       <summary>Sound tuning</summary>
       <div id="toneControls"></div>
+    </details>
+  </div>
+
+  <div class="panel">
+    <details>
+      <summary>Vehicle calibration</summary>
+      <p class="hint" style="margin-top:0">Match the simulated gearbox to your real car, so RPM tracks real road speed believably — e.g. your car's actual top speed and gear count.</p>
+
+      <label for="gearCountInput">Gears</label>
+      <input type="number" id="gearCountInput" min="3" max="10" step="1" placeholder="auto (from engine)">
+
+      <label for="topSpeedInput">Top speed (km/h)</label>
+      <input type="number" id="topSpeedInput" min="80" max="400" step="1" placeholder="auto (from drag/power)">
+
+      <div class="row">
+        <button id="applyGearboxBtn">Apply calibration</button>
+        <button id="resetGearboxBtn">Reset to auto</button>
+      </div>
+      <p class="hint" id="gearboxHint">not yet applied — using the engine's own default gearbox</p>
     </details>
   </div>
 

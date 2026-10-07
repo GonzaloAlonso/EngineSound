@@ -87,6 +87,10 @@ export class EngineSim {
     // engines never leaves a car that cannot pull its own top gears.
     // `gearing: 'stock'` keeps the vehicle preset's own ratio table.
     this.stockGearing = opts.gearing === 'stock';
+    // Real-car calibration — see setGearboxTuning(). Constructor opts let a
+    // host set this up front instead of needing a call right after.
+    this.customGearbox =
+      opts.gears || opts.topSpeedKmh ? { gears: opts.gears, topSpeedKmh: opts.topSpeedKmh } : null;
     this.geared = this._gearedVehicle();
 
     this.mix = { ...DEFAULT_MIX, ...(opts.mix || {}) };
@@ -757,7 +761,28 @@ export class EngineSim {
   }
 
   _gearedVehicle() {
-    return this.stockGearing ? this.vehicle : gearVehicle(this.profile, this.vehicle);
+    if (this.stockGearing) return this.vehicle;
+    return gearVehicle(this.profile, this.vehicle, this.customGearbox || undefined);
+  }
+
+  /**
+   * Calibrate the gearbox to a real car instead of the engine/vehicle
+   * preset's own assumed drag and mass: `{ gears, topSpeedKmh }`, either
+   * field optional (omit `topSpeedKmh` to keep deriving top speed from
+   * drag/power while still overriding the gear count, etc). Pass `null` to
+   * go back to the engine's natural, fully-derived gearbox. Cheap — re-runs
+   * the same live gear-ratio recompute `setVehicle()` uses, no voice
+   * rebuild, safe to call mid-drive.
+   *
+   * No effect if the sim was built with `gearing: 'stock'`, which keeps the
+   * vehicle preset's fixed ratio table rather than designing one at all.
+   */
+  setGearboxTuning(tuning) {
+    this.customGearbox = tuning && (tuning.gears || tuning.topSpeedKmh) ? { ...tuning } : null;
+    this.geared = this._gearedVehicle();
+    if (this.physics.setVehicle) this.physics.setVehicle(this.geared);
+    if (this.transmission.setVehicle) this.transmission.setVehicle(this.geared);
+    return this.geared;
   }
 
   // -------------------------------------------------------------------------

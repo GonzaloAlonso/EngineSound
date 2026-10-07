@@ -32,6 +32,11 @@ const masterVol = document.getElementById("masterVol");
 const masterVolVal = document.getElementById("masterVolVal");
 const debugEl = document.getElementById("debug");
 const toneControlsEl = document.getElementById("toneControls");
+const gearCountInput = document.getElementById("gearCountInput");
+const topSpeedInput = document.getElementById("topSpeedInput");
+const applyGearboxBtn = document.getElementById("applyGearboxBtn");
+const resetGearboxBtn = document.getElementById("resetGearboxBtn");
+const gearboxHint = document.getElementById("gearboxHint");
 
 // Our own starting point, a bit different from Engine_Sim's upstream defaults:
 // brighter/punchier for more perceived detail, and pop depth raised so the
@@ -143,6 +148,38 @@ function applyInertiaTuning() {
   const base = sim.getParam("engine.engineInertia");
   if (base != null) sim.setParam("engine.engineInertia", base * inertiaFactor(cylinders));
 }
+
+/**
+ * Real-car gearbox calibration — reads the Vehicle Calibration panel's own
+ * inputs. `null` fields mean "let the engine/vehicle preset decide," same
+ * as leaving the input blank.
+ */
+function currentGearboxTuning() {
+  const gears = Number(gearCountInput.value) || undefined;
+  const topSpeedKmh = Number(topSpeedInput.value) || undefined;
+  return gears || topSpeedKmh ? { gears, topSpeedKmh } : null;
+}
+
+function applyGearboxTuning() {
+  if (!sim) return;
+  const tuning = currentGearboxTuning();
+  const geared = sim.setGearboxTuning(tuning);
+  if (!tuning) {
+    gearboxHint.textContent = "reset — using the engine's own default gearbox";
+    return;
+  }
+  const topRatio = geared.gearRatios[geared.gearRatios.length - 1];
+  const bits = [`${geared.gearRatios.length} gears`, `top gear ratio ${topRatio.toFixed(2)}:1`];
+  if (tuning.topSpeedKmh) bits.push(`redline in top gear at ~${tuning.topSpeedKmh} km/h`);
+  gearboxHint.textContent = `applied — ${bits.join(", ")}`;
+}
+
+applyGearboxBtn.addEventListener("click", applyGearboxTuning);
+resetGearboxBtn.addEventListener("click", () => {
+  gearCountInput.value = "";
+  topSpeedInput.value = "";
+  applyGearboxTuning();
+});
 
 // Cold-start tuning. The engine's own idle governor holds rpm at whatever
 // `engine.idleRpm` currently is, so both cranking AND the cold-start flare
@@ -400,6 +437,8 @@ function reportTelemetry(s) {
         brake: s.brake,
         auto: s.auto,
         shiftPhase: s.shiftPhase,
+        gearRatio: Math.round(s.gearRatio * 1000) / 1000,
+        gearRatios: s.gearRatios,
       },
       null,
       1
@@ -471,7 +510,10 @@ startBtn.addEventListener("pointerdown", async (e) => {
   starter.setVolume(Number(masterVol.value) / 100);
   const simExisted = !!sim;
   ensureSim();
-  if (!simExisted) applyInertiaTuning();
+  if (!simExisted) {
+    applyInertiaTuning();
+    applyGearboxTuning();
+  }
   EngineSim.preload(audioCtx);
 
   // Below-idle cranking state: the starter is turning a dead engine over

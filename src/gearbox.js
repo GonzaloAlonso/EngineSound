@@ -62,7 +62,11 @@ function spreadRange(n) {
  * @param {object} vehicle a vehicle preset: mass, wheelRadius, finalDrive,
  *                         dragArea (Cd·A, m²), rollingResistance, and
  *                         optionally gravity (m/s², a game may run its own)
- * @param {object} [opts]  gears (overrides engine.gears), efficiency
+ * @param {object} [opts]  gears (overrides engine.gears), efficiency,
+ *                         topSpeedKmh (overrides the drag-limited top speed
+ *                         with a directly specified one — for matching a
+ *                         real car's actual top speed instead of deriving
+ *                         it from assumed drag/mass figures)
  * @returns {{ gearRatios: number[], gearTeeth: number[], topSpeed: number }}
  *          topSpeed is the design's drag-limited top speed, m/s
  */
@@ -78,13 +82,19 @@ export function designGearbox(engine, vehicle, opts = {}) {
   // Aim the top-speed balance just past the power peak, never at the limiter.
   const pk = powerPeak(engine);
   const rpmTop = Math.min(pk.rpm * 1.04, engine.redlineRpm * 0.9);
-  const Pwheel = eff * wotTorque(engine, rpmTop) * rpmTop / RPM_PER_RADS;
-  let lo = 0, hi = 200;
-  for (let i = 0; i < 60; i++) {
-    const v = 0.5 * (lo + hi);
-    if (resist(v) * v < Pwheel) lo = v; else hi = v;
+  let vTop;
+  if (opts.topSpeedKmh > 0) {
+    // Known from the real car, not derived from an assumed drag/mass figure.
+    vTop = opts.topSpeedKmh / 3.6;
+  } else {
+    const Pwheel = eff * wotTorque(engine, rpmTop) * rpmTop / RPM_PER_RADS;
+    let lo = 0, hi = 200;
+    for (let i = 0; i < 60; i++) {
+      const v = 0.5 * (lo + hi);
+      if (resist(v) * v < Pwheel) lo = v; else hi = v;
+    }
+    vTop = lo;
   }
-  const vTop = lo;
   const Rtop = (rpmTop / RPM_PER_RADS) * r / Math.max(vTop, 1);   // overall ratio
 
   // --- first gear ----------------------------------------------------------
