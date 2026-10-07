@@ -128,6 +128,15 @@ export class ShiftController {
     this.kickdownThrottle = 0.85;
     this.minShiftInterval = 0.35;   // anti-hunt lockout, seconds
 
+    // Aggressive downshifting under braking — not a setting, just how the
+    // box behaves: hard or sustained brake pulls the downshift point up
+    // toward redline instead of the usual throttle-based one, the way a
+    // car's own "sport" auto downshifts under braking to have the revs
+    // ready. See downshiftRpm() and auto() below.
+    this.downFracBrakeMax = 0.80;   // ceiling the brake-aggressive point can reach
+    this.brakeHoldFullS = 1.5;      // seconds of continuous brake to count as "sustained"
+    this._brakeHeldS = 0;
+
     // Phase durations, recomputed at each shift (they are constant per type but
     // kept as fields so nothing is allocated mid-shift).
     this.tCut = 0; this.tOpen = 0; this.tSync = 0; this.tEngage = 0;
@@ -145,6 +154,7 @@ export class ShiftController {
     this.sinceShift = 999;      // s since the last shift finished
     this.contactSeen = false;   // driveline made contact since `engage` began
     this.blipHeld = false;
+    this._brakeHeldS = 0;
   }
 
   get shifting() {
@@ -239,9 +249,16 @@ export class ShiftController {
     return Math.max(this.idleRpm * 1.6, this.redlineRpm * f);
   }
 
-  downshiftRpm(throttle) {
+  /**
+   * `brakeAggression` (0..1, see auto()) pulls the downshift point up from
+   * the usual throttle-based fraction toward `downFracBrakeMax` — hard or
+   * sustained braking holds the lower gear until rpm is close to redline
+   * instead of the normal coasting point.
+   */
+  downshiftRpm(throttle, brakeAggression = 0) {
     const f = this.downFracLow + (this.downFracHigh - this.downFracLow) * clamp(throttle, 0, 1);
-    return Math.max(this.idleRpm * 1.15, this.redlineRpm * f);
+    const target = f + (this.downFracBrakeMax - f) * clamp(brakeAggression, 0, 1);
+    return Math.max(this.idleRpm * 1.15, this.redlineRpm * target);
   }
 
   /** Decide whether to change gear. Called once per sub-step; cheap. */
@@ -274,10 +291,22 @@ export class ShiftController {
     if (d.gear > 1) {
       const lower = d.gear - 1;
       const lowerRpm = d.gearedRpm(lower);
+      // Hard brake, or brake held continuously for a while (a long decel or
+      // a downhill), ramps this 0->1 — see downshiftRpm().
+      const brakeAggression = Math.max(
+        clamp(d.brake || 0, 0, 1),
+        clamp(this._brakeHeldS / this.brakeHoldFullS, 0, 1)
+      );
       // v1's guard: only drop a gear if the lower one will not immediately
-      // bounce us back off the upshift point (or the limiter).
-      if (lowerRpm >= up) return;
-      if (rpm <= this.downshiftRpm(thr)) { this.request(d, lower); return; }
+      // bounce us back off the upshift point (or the limiter). That bounce
+      // needs throttle to happen at all (the upshift check above requires
+      // thr > 0.05), so under real braking — zero throttle by definition —
+      // it cannot occur; relax the guard to the redline itself instead of
+      // the (much lower, coasting) throttle-based upshift point, or hard
+      // braking could never win back a gear it has every reason to want.
+      const bounceGuard = brakeAggression > 0.3 ? this.redlineRpm * 0.97 : up;
+      if (lowerRpm >= bounceGuard) return;
+      if (rpm <= this.downshiftRpm(thr, brakeAggression)) { this.request(d, lower); return; }
       // Kickdown: floor it at low rpm in a tall gear and the box drops one.
       // ...and only when the lower gear actually makes more power, or the
       // power upshift above and this would hand the car back and forth.
@@ -309,6 +338,12 @@ export class ShiftController {
     d.throttleOverride = null;
     d.clutchCmd = null;          // null = drivetrain decides
     d.clutchRate = 0;            // 0 = drivetrain default
+
+    // Tracked unconditionally (even mid-shift) so the aggression state is
+    // already current the moment a shift completes, not catching up after.
+    // Decays faster than it builds so releasing the brake recovers promptly.
+    if (d.brake > 0.15) this._brakeHeldS = Math.min(this._brakeHeldS + h, this.brakeHoldFullS * 2);
+    else this._brakeHeldS = Math.max(0, this._brakeHeldS - h * 2);
 
     if (!this.busy) {
       this.sinceShift += h;
