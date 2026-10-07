@@ -301,11 +301,15 @@ export class ShiftController {
       // bounce us back off the upshift point (or the limiter). That bounce
       // needs throttle to happen at all (the upshift check above requires
       // thr > 0.05), so under real braking — zero throttle by definition —
-      // it cannot occur; relax the guard to the redline itself instead of
-      // the (much lower, coasting) throttle-based upshift point, or hard
-      // braking could never win back a gear it has every reason to want.
-      const bounceGuard = brakeAggression > 0.3 ? this.redlineRpm * 0.97 : up;
-      if (lowerRpm >= bounceGuard) return;
+      // it cannot occur. Drop the guard entirely rather than relax it to a
+      // ceiling: request() already refuses anything past the actual redline
+      // via wouldOverRev(), and gear ratio steps are biggest between LOW
+      // gears by design (gearbox.js) — any extra margin here, even 97% of
+      // redline, was being hit hardest exactly where this feature matters
+      // most (grabbing 2nd or 1st under hard braking), while barely
+      // affecting the small steps between high gears. Let the real safety
+      // check be the only one.
+      if (brakeAggression <= 0.3 && lowerRpm >= up) return;
       if (rpm <= this.downshiftRpm(thr, brakeAggression)) { this.request(d, lower); return; }
       // Kickdown: floor it at low rpm in a tall gear and the box drops one.
       // ...and only when the lower gear actually makes more power, or the
