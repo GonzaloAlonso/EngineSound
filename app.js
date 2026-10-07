@@ -1,6 +1,7 @@
 import { EngineSim } from "./src/engine-sim.js";
 import { StarterSound } from "./starter.js";
 import { MotionInput } from "./motion.js";
+import { VEHICLE_PRESET_GROUPS } from "./vehicle-presets.js";
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
@@ -32,12 +33,40 @@ const masterVol = document.getElementById("masterVol");
 const masterVolVal = document.getElementById("masterVolVal");
 const debugEl = document.getElementById("debug");
 const toneControlsEl = document.getElementById("toneControls");
+const vehiclePresetSelect = document.getElementById("vehiclePresetSelect");
+const presetHint = document.getElementById("presetHint");
 const gearCountInput = document.getElementById("gearCountInput");
 const topSpeedInput = document.getElementById("topSpeedInput");
 const zeroToHundredInput = document.getElementById("zeroToHundredInput");
 const applyGearboxBtn = document.getElementById("applyGearboxBtn");
 const resetGearboxBtn = document.getElementById("resetGearboxBtn");
 const gearboxHint = document.getElementById("gearboxHint");
+
+const VEHICLE_PRESETS_BY_ID = Object.fromEntries(
+  VEHICLE_PRESET_GROUPS.flatMap((g) => g.vehicles).map((v) => [v.id, v])
+);
+for (const group of VEHICLE_PRESET_GROUPS) {
+  const optgroup = document.createElement("optgroup");
+  optgroup.label = group.make;
+  for (const v of group.vehicles) {
+    const opt = document.createElement("option");
+    opt.value = v.id;
+    opt.textContent = v.label;
+    optgroup.appendChild(opt);
+  }
+  vehiclePresetSelect.appendChild(optgroup);
+}
+vehiclePresetSelect.addEventListener("change", () => {
+  const preset = VEHICLE_PRESETS_BY_ID[vehiclePresetSelect.value];
+  if (!preset) {
+    presetHint.textContent = "";
+    return;
+  }
+  topSpeedInput.value = preset.topSpeedKmh;
+  zeroToHundredInput.value = preset.zeroToHundredS;
+  presetHint.textContent = `${preset.label}: ${preset.topSpeedKmh} km/h top speed, ${preset.zeroToHundredS}s 0-100 — gear count left to your own taste`;
+  applyVehicleCalibration();
+});
 
 // Our own starting point, a bit different from Engine_Sim's upstream defaults:
 // brighter/punchier for more perceived detail, and pop depth raised so the
@@ -190,6 +219,8 @@ function applyVehicleCalibration() {
 
 applyGearboxBtn.addEventListener("click", applyVehicleCalibration);
 resetGearboxBtn.addEventListener("click", () => {
+  vehiclePresetSelect.value = "";
+  presetHint.textContent = "";
   gearCountInput.value = "";
   topSpeedInput.value = "";
   zeroToHundredInput.value = "";

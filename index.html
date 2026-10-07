@@ -158,6 +158,12 @@
       <summary>Vehicle calibration</summary>
       <p class="hint" style="margin-top:0">Match the simulated gearbox to your real car, so RPM tracks real road speed believably — e.g. your car's actual top speed and gear count.</p>
 
+      <label for="vehiclePresetSelect">Real car preset (optional)</label>
+      <select id="vehiclePresetSelect">
+        <option value="">— pick a real car to fill in top speed / 0-100 —</option>
+      </select>
+      <p class="hint" id="presetHint" style="margin-top:6px"></p>
+
       <label for="gearCountInput">Gears</label>
       <input type="number" id="gearCountInput" min="3" max="10" step="1" placeholder="auto (from engine)">
 
