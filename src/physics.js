@@ -162,15 +162,19 @@ export class Drivetrain {
     });
     this.isAuto = vehicle.gearbox === 'auto';
 
-    // Whether a near-stall is caught by auto-disengaging the clutch (see the
-    // throttle-off/low-rpm branch in _launchClutch) rather than let through
-    // to an actual stall. On by default — GPS/motion-driven input has no way
-    // to model a driver's clutch foot, so the save is what keeps "coast to a
-    // real stop" from either hanging at a creep floor or stalling the sim on
-    // every red light. Pedal-driven manual practice wants the opposite: no
-    // clutch pedal is modelled there either, so the realistic consequence of
-    // holding no throttle in gear below idle IS a stall, same as a real
-    // manual car. app.js flips this with the input-mode toggle.
+    // Whether the driveline is coupled through a torque converter (see
+    // _useConverter below) instead of a rigid, lockable clutch, REGARDLESS of
+    // the selected vehicle's own gearbox type. GPS/motion-driven input has no
+    // way to model a driver's clutch foot, so it is simulated as an
+    // automatic instead: engine braking still applies in gear with no
+    // throttle (a converter is not a disengaged clutch — it keeps
+    // transmitting torque, just without rigid lockup), but a torque
+    // converter structurally cannot drag the engine down and stall it the
+    // way a locked clutch can, so neither can this. Pedal-driven manual
+    // practice wants the opposite: no clutch pedal is modelled there either,
+    // so the realistic consequence of holding no throttle in gear below idle
+    // IS a stall, same as a real manual car with no clutch pedal input.
+    // app.js flips this with the input-mode toggle.
     this.stallProtection = opts.stallProtection !== false;
 
     // --- inputs ------------------------------------------------------------
@@ -188,7 +192,10 @@ export class Drivetrain {
     this.contact = 0;                          // -1 / 0 / +1 which flank is loaded
     this.clutch = 0;                           // actual engagement 0..1
     this.boost = 0;                            // 0..1 of turbo.maxBoost
-    this.gear = 1;
+    // Neutral — not whatever gear happens to be "first". A freshly built
+    // engine has not had a gear selected yet, same as app.js's own
+    // engine-start reset (see forceNeutral()) treats a restart.
+    this.gear = 0;
 
     // --- derived / bookkeeping --------------------------------------------
     this.Tp = 0;                 // transmitted driveline torque at gbox output
@@ -333,6 +340,27 @@ export class Drivetrain {
   /** @param {number} n 0 = neutral, 1..N */
   setGear(n) { return this.shift.request(this, n, true); }
 
+  /**
+   * Hard reset to neutral — NOT a scripted shift. setGear(0) mid-drive is a
+   * real gear change (clutch cut, synchroniser, the works) and should sound
+   * like one; resetting the gearbox for a fresh engine start is not a shift
+   * at all, there is no "from" gear to declutch out of in any meaningful
+   * sense. app.js calls this on every start, since the Drivetrain is reused
+   * across start/stop cycles and would otherwise carry over whatever gear
+   * the previous drive ended in.
+   */
+  forceNeutral() {
+    this.gear = 0;
+    this.gearboxNeutral = true;
+    this.clutch = 0;
+    this.clutchCmd = null;
+    this.clutchRate = 0;
+    this.launchArmed = true;
+    this.launchI = 0; this.launchT = 0; this.launchRef = 0;
+    this.twist = 0; this.dtwist = 0; this.contact = 0;
+    this.shift.reset();
+  }
+
   // =========================================================================
   // Helpers the shift controller uses (duck-typed interface)
   // =========================================================================
@@ -341,6 +369,14 @@ export class Drivetrain {
   get speed() { return this.ww * this.r; }
   get gearRatio() { return this.gear > 0 ? this.ratios[this.gear - 1] : 0; }
   get totalRatio() { return this.gear > 0 ? this.ratios[this.gear - 1] * this.fd : 0; }
+
+  /**
+   * Whether the gearbox-to-engine coupling is a torque converter rather than
+   * a rigid, lockable clutch: the vehicle's own gearbox type (a real
+   * automatic), OR stallProtection standing in for one (GPS/motion input
+   * simulating "an automatic" for want of a clutch pedal to model).
+   */
+  get _useConverter() { return this.isAuto || this.stallProtection; }
 
   /** Engine rpm the wheels would impose in gear `g` right now. */
   gearedRpm(g) {
@@ -608,9 +644,9 @@ export class Drivetrain {
     // -------- clutch command ----------------------------------------------
     this._stepClutch(h, inGear, rg);
 
-    // -------- torque converter (auto only) --------------------------------
+    // -------- torque converter (auto, or GPS/motion's auto-clutch sim) ----
     let Tconv = 0, Tturb = 0;
-    if (this.isAuto) {
+    if (this._useConverter) {
       const c = this._converter(this.we, this.wg);
       Tconv = c.pump; Tturb = c.turbine;
     }
@@ -710,7 +746,7 @@ export class Drivetrain {
     let rate = this.clutchRate;
 
     if (cmd == null) {
-      if (this.isAuto) {
+      if (this._useConverter) {
         // Lockup clutch. Off at low speed and under heavy throttle so the
         // converter can multiply torque; on at cruise so the auto does not
         // drone. The converter carries the torque either way.
@@ -751,53 +787,17 @@ export class Drivetrain {
       this.launchArmed = true; return 0;
     }
 
-    // Starting from (or settling at) an actual standstill with no throttle:
-    // never creep off on its own, in ANY mode, stallProtection included. This
-    // is deliberately UNCONDITIONAL and separate from the stallProtection
-    // check below — it is what "stuck at 11 km/h the instant the engine
-    // caught, before the gas was ever touched" turned out to be, and it has
-    // nothing to do with whether the sim is allowed to protect against a
-    // stall once actually moving. The threshold is a sliver of idle rather
-    // than a fraction like 0.5 — it should only catch GENUINE standstill
-    // (geared is exactly 0 there, since it starts life at a real-world
-    // standstill), not the ordinary low-speed range that stallProtection is
-    // the real gate for.
-    if (this.throttle < 0.05 && geared < idle * 0.05) {
-      this.launchI = 0; this.launchT = 0; this.launchRef = 0;
-      this.launchArmed = true; return 0;
-    }
-
-    // Foot off the gas this close to idle speed: a manual driver dips the
-    // clutch here rather than letting the engine load the wheels. This has to
-    // be checked UNCONDITIONALLY, ahead of the launchArmed lock below — not
-    // only on the way INTO a launch, and the threshold has to sit ABOVE idle,
-    // not below it. Once launchArmed goes false (clutch fully locked, the
-    // normal cruising state), the idle governor further down in _substep
-    // still adds torque to hold the engine at idle, and with the clutch
-    // locked that torque drives the wheels too — so coasting down in gear
-    // with the clutch left locked doesn't slow past "idle speed in this
-    // gear", it SETTLES there: the governor defends idle rpm and, through
-    // the locked clutch, that defence becomes a steady crawl the car can
-    // never coast below. A threshold below idle (the old value, half of it)
-    // can never catch this: the governor won't let geared rpm fall that far
-    // while the clutch is locked. Catching it on the way DOWN, before the
-    // lock-and-defend loop closes, is what makes coasting actually reach
-    // zero. (This is also why, with the drivetrain starting in gear 1, the
-    // car used to crawl off on its own the instant the engine caught, before
-    // the gas was ever touched — same loop, approached from a stop instead
-    // of from speed.)
-    //
-    // Gated on stallProtection: with it off, this branch does not fire at
-    // all, so the clutch stays locked and the car's momentum (or the brakes)
-    // can genuinely drag the engine down through idle and into a stall —
-    // which is the point, for pedal-driven manual practice.
-    if (this.stallProtection && this.throttle < 0.05 && geared < idle * 1.15) {
-      this.launchT = 0;
-      this.launchRef = 0;
-      this.launchI = 0;
-      this.launchArmed = true;
-      return 0;
-    }
+    // This path only runs when _useConverter is false — i.e. a rigid,
+    // lockable clutch with no driver clutch-pedal input modelled, which is
+    // pedal-driven manual practice specifically (GPS/motion input gets the
+    // torque-converter path instead; see _useConverter and _stepClutch).
+    // So being in gear with no throttle is NOT freewheeling here: engine
+    // friction drags through the locked clutch exactly like a real manual
+    // car's engine braking, and nothing below protects against it being
+    // dragged through idle into a genuine stall if the driver never gives it
+    // gas. app.js is what keeps this from firing at engine start instead: it
+    // starts the drivetrain in neutral, so this function takes the !inGear
+    // branch above until the driver explicitly shifts into gear.
 
     // The hold rpm CREEPS UP with road speed instead of being a fixed number.
     //

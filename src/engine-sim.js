@@ -817,6 +817,7 @@ export class EngineSim {
   shiftUp() { return this.physics.shiftUp(); }
   shiftDown() { return this.physics.shiftDown(); }
   setGear(n) { return this.physics.setGear(n); }
+  forceNeutral() { this.physics.forceNeutral(); }
 
   setVolume(v) {
     this._volume = clamp(Number(v) || 0, 0, 1);

@@ -256,6 +256,14 @@ const FLARE_KICK_MAX_MS = 1200;
 // the rest.
 const FLARE_HOLD_MS = 400;
 
+// Selecting a gear from neutral (see shiftUpBtn below) with no clutch pedal
+// modelled is the same "about to stall" situation the no-gas-in-gear stall
+// check exists for — except the driver has not even had a chance to react
+// yet. A brief throttle floor buys them that reaction time, the same way the
+// cold-start flare-kick does, just gentler and shorter.
+const GEAR_ENGAGE_ASSIST_MS = 1500;
+const GEAR_ENGAGE_KICK_THROTTLE = 0.35;
+
 // Cold-exhaust character during the flare: valve open (more rasp/level),
 // brighter and punchier than the normal baseline — "hollow, metallic,
 // resonant... the mufflers haven't reached temperature yet." Eases back to
@@ -300,6 +308,7 @@ let lastTime = performance.now();
 let inputMode = "manual"; // 'manual' | 'auto'
 let belowIdleS = 0; // dwell timer for the manual-mode stall detection, see frame()
 const STALL_DWELL_S = 0.35; // ignore brief dips (shift lash etc.) — only a sustained one is a real stall
+let gearEngageUntil = 0; // performance.now() timestamp — see GEAR_ENGAGE_ASSIST_MS
 const motion = new MotionInput();
 let wakeLock = null;
 let wakeLockPulse = null; // periodic defensive re-check while running
@@ -495,6 +504,10 @@ function frame(now) {
     // target, rather than waiting on the governor's own proportional gain
     // alone (which only engages once throttle is back near zero anyway).
     if (catchPhase === "kick") gas = Math.max(gas, FLARE_KICK_THROTTLE);
+    // Gear-engage assist (see GEAR_ENGAGE_ASSIST_MS) — also doubles as the
+    // stall check's grace period below, since it keeps `gas` above the
+    // no-throttle threshold that check looks at.
+    if (now < gearEngageUntil) gas = Math.max(gas, GEAR_ENGAGE_KICK_THROTTLE);
     sim.setThrottle(gas);
     sim.setBrake(brake);
     sim.update(dt);
@@ -657,6 +670,18 @@ startBtn.addEventListener("pointerdown", async (e) => {
   }
   EngineSim.preload(audioCtx);
 
+  // Always start in neutral — a real engine starts with the gearbox
+  // disengaged, not however a previous drive happened to leave it (and sim
+  // is reused across start/stop cycles, so without this it would literally
+  // carry over whatever gear the last drive ended in). A hard reset, not
+  // setGear(0): there is no real shift to animate on a fresh start, and
+  // animating one anyway left a brief residual creep blip during the
+  // transition. Shift ↑ is required to pull away, same as pressing Neutral
+  // mid-drive already works.
+  sim.forceNeutral();
+  belowIdleS = 0;
+  gearEngageUntil = 0;
+
   // Below-idle cranking state: the starter is turning a dead engine over
   // from a dead stop, not yet running on its own. Reset the flare's cold-
   // exhaust character too, in case a previous run was stopped mid-flare.
@@ -710,6 +735,7 @@ function stopEngine(statusText) {
   state = "off";
   catchPhase = null;
   belowIdleS = 0;
+  gearEngageUntil = 0;
   startBtn.disabled = false;
   stopBtn.disabled = true;
   statusEl.textContent = statusText;
@@ -737,7 +763,18 @@ vehicleSelect.addEventListener("change", () => {
   if (state === "running") statusEl.textContent = `running — ${engineSelect.value} / ${vehicleSelect.value}`;
 });
 
-shiftUpBtn.addEventListener("click", () => state === "running" && sim.shiftUp());
+shiftUpBtn.addEventListener("click", () => {
+  if (state !== "running") return;
+  const wasNeutral = sim.getState().gear === 0;
+  // The gear change itself is scripted over the next several frames (cut →
+  // open → sync → engage...), so `sim.getState().gear` right after this call
+  // still reads the OLD gear — shiftUp()'s own return value is what tells us
+  // the request was accepted, not a re-read of state that hasn't caught up yet.
+  const accepted = sim.shiftUp();
+  if (wasNeutral && accepted) {
+    gearEngageUntil = performance.now() + GEAR_ENGAGE_ASSIST_MS;
+  }
+});
 shiftDownBtn.addEventListener("click", () => state === "running" && sim.shiftDown());
 
 let autoOn = true;
@@ -757,6 +794,8 @@ neutralBtn.addEventListener("click", () => {
   autoShiftBtn.classList.remove("toggled");
   sim.setAutoShift(false);
   sim.setGear(0);
+  belowIdleS = 0;
+  gearEngageUntil = 0;
 });
 
 masterVol.addEventListener("input", () => {
