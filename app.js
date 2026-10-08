@@ -298,6 +298,8 @@ let loopRunning = false;
 let lastTime = performance.now();
 
 let inputMode = "manual"; // 'manual' | 'auto'
+let belowIdleS = 0; // dwell timer for the manual-mode stall detection, see frame()
+const STALL_DWELL_S = 0.35; // ignore brief dips (shift lash etc.) — only a sustained one is a real stall
 const motion = new MotionInput();
 let wakeLock = null;
 let wakeLockPulse = null; // periodic defensive re-check while running
@@ -391,6 +393,8 @@ inputModeBtn.addEventListener("click", () => {
   inputMode = inputMode === "manual" ? "auto" : "manual";
   inputModeBtn.textContent = inputMode === "auto" ? "Auto (GPS)" : "Manual";
   inputModeBtn.classList.toggle("toggled", inputMode === "auto");
+  if (sim) sim.setStallProtection(inputMode === "auto");
+  belowIdleS = 0; // switching modes shouldn't carry over a near-stall dwell
 });
 
 function ensureContext() {
@@ -415,6 +419,12 @@ function ensureSim() {
       engine: engineSelect.value,
       vehicle: vehicleSelect.value,
       volume: Number(masterVol.value) / 100,
+      // GPS/motion input has no way to model a driver's clutch foot, so the
+      // sim auto-disengages near idle to coast cleanly to a stop instead of
+      // stalling. Manual/pedal mode models no clutch either, but there a
+      // stall is the realistic (and more honest) consequence — see the
+      // stall-detection in frame() below.
+      stallProtection: inputMode === "auto",
     });
   }
   return sim;
@@ -489,6 +499,25 @@ function frame(now) {
     sim.setBrake(brake);
     sim.update(dt);
     const s = sim.getState();
+
+    // Manual/pedal mode models no clutch pedal, so holding no throttle in
+    // gear while rpm sags below idle has the same realistic consequence a
+    // real stick-shift car would: it stalls. (GPS/motion mode has
+    // stallProtection on instead — see ensureSim() — so this never fires
+    // there.) Dwell-gated so a brief dip (shift lash, a lash-contact
+    // transient) does not kill the engine on a single bad frame, and
+    // skipped during the cold-start flare since that phase is scripted
+    // rpm-above-idle by design, not a real driving state.
+    if (catchPhase === null && inputMode !== "auto" && s.gear > 0 && gas <= 0.02 && s.rpm < s.idle) {
+      belowIdleS += dt;
+      if (belowIdleS >= STALL_DWELL_S) {
+        stopEngine("engine stalled — no gas, in gear, below idle. Press Start to restart.");
+        requestAnimationFrame(frame);
+        return;
+      }
+    } else {
+      belowIdleS = 0;
+    }
 
     if (catchPhase === "kick" && (s.rpm >= flareTarget * 0.92 || now - kickStartedAt > FLARE_KICK_MAX_MS)) {
       // Reached the flare rpm under its own torque (or hit the runaway
@@ -674,15 +703,16 @@ function releaseStart() {
   startBtn.addEventListener(evt, releaseStart)
 );
 
-stopBtn.addEventListener("click", () => {
+function stopEngine(statusText) {
   if (state !== "running") return;
   starter && starter.shutdownDecay();
   sim.stop();
   state = "off";
   catchPhase = null;
+  belowIdleS = 0;
   startBtn.disabled = false;
   stopBtn.disabled = true;
-  statusEl.textContent = "engine off";
+  statusEl.textContent = statusText;
   rpmValue.textContent = "0";
   gearValue.textContent = "N";
   speedValue.textContent = "0";
@@ -691,7 +721,9 @@ stopBtn.addEventListener("click", () => {
   if (wakeLock) wakeLock.release().catch(() => {});
   wakeLock = null;
   setWakeLockStatus("");
-});
+}
+
+stopBtn.addEventListener("click", () => stopEngine("engine off"));
 
 engineSelect.addEventListener("change", () => {
   if (!sim) return; // not built yet — next crank will pick up the selection

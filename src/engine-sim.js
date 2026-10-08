@@ -812,6 +812,7 @@ export class EngineSim {
   setBrake(v) { this.physics.brake = clamp(Number(v) || 0, 0, 1); }
   setClutch(v) { this.physics.clutchPedal = clamp(Number(v) || 0, 0, 1); }
   setAutoShift(on) { this.physics.setAutoShift(on); }
+  setStallProtection(on) { this.physics.setStallProtection(on); }
 
   shiftUp() { return this.physics.shiftUp(); }
   shiftDown() { return this.physics.shiftDown(); }
