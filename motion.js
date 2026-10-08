@@ -32,6 +32,15 @@ export class MotionInput {
   // something a user-supplied 0-100 time can itself determine.
   static BREAKAWAY_SPEED_MS = 9.7;
 
+  // ~20 km/h — below this, GPS-derived speed's own noise floor becomes a
+  // large fraction of the signal (confirmed by actual road testing: erratic
+  // revs at low speed/parking-lot pace that weren't present at speed).
+  // Not a tunable the engine's own calibration can derive — it's a sensor
+  // characteristic, not a vehicle one.
+  static LOW_SPEED_MS = 5.5;
+  static LOW_SPEED_TRUST_FLOOR = 0.15; // never fully distrust — a real slow pull-away still needs some response
+  static LOW_SPEED_DEADBAND = 0.6; // m/s^2, full deadband width at zero trust
+
   constructor() {
     this.supported = {
       geolocation: "geolocation" in navigator,
@@ -43,6 +52,7 @@ export class MotionInput {
     this.accelMs2 = 0; // smoothed signed accel, m/s^2 — from GPS speed delta
     this.gpsFresh = false;
     this.activity = 0; // 0..1, accelerometer-derived "something's happening" gate
+    this.gpsFixIntervalS = null; // seconds between the last two GPS fixes — for diagnosing perceived lag
 
     this._lastSpeedSample = null; // { speedMs, atMs }
     this._watchId = null;
@@ -145,13 +155,33 @@ export class MotionInput {
 
     if (this._lastSpeedSample) {
       const dt = (now - this._lastSpeedSample.atMs) / 1000;
+      this.gpsFixIntervalS = dt; // every fix, even ones too close together to act on
       if (dt > 0.2) {
         // Ignore fixes closer together than ~0.2s — speed-delta noise at
         // tiny dt swings wildly.
-        const rawAccel = (s - this._lastSpeedSample.speedMs) / dt;
-        // Activity gate pulls the smoothing time-constant down (snappier)
-        // when the accelerometer says something's actively changing.
-        const alpha = 0.35 + this.activitySmoothingBoost * this.activity;
+        let rawAccel = (s - this._lastSpeedSample.speedMs) / dt;
+
+        // GPS speed's own noise floor (real, device-reported, not a bug in
+        // this code) is a small fraction of a highway speed but a HUGE one
+        // at walking/parking-lot pace — road-tested and confirmed erratic
+        // revs at low speed that weren't there at speed. `trust` ramps from
+        // a floor (never fully zero — a genuine slow pull-away still needs
+        // SOME response) up to 1 by LOW_SPEED_MS.
+        const avgSpeed = (s + this._lastSpeedSample.speedMs) / 2;
+        const trust = Math.max(MotionInput.LOW_SPEED_TRUST_FLOOR, Math.min(1, avgSpeed / MotionInput.LOW_SPEED_MS));
+
+        // Below full trust, small swings are pure noise, not real
+        // acceleration — zero them instead of smoothing them (smoothing
+        // still lets noise walk the output around over many samples).
+        const deadband = MotionInput.LOW_SPEED_DEADBAND * (1 - trust);
+        if (Math.abs(rawAccel) < deadband) rawAccel = 0;
+
+        // The activity gate (road/engine vibration counts as "activity"
+        // too) must NOT speed up smoothing at low trust — that was making
+        // the noise WORSE exactly where GPS is already worst. Scale its
+        // contribution by `trust`, and floor the base alpha rather than
+        // letting it go anywhere near zero, so output still converges.
+        const alpha = Math.max(0.12, 0.35 * trust) + this.activitySmoothingBoost * this.activity * trust;
         this.accelMs2 += (rawAccel - this.accelMs2) * Math.min(1, alpha);
         this._lastSpeedSample = { speedMs: s, atMs: now };
       }
@@ -184,6 +214,6 @@ export class MotionInput {
     const fullThrottleAccel = this._expectedFullThrottleAccel(this.speedMs);
     const gas = a > 0 ? Math.max(0, Math.min(1, a / fullThrottleAccel)) : 0;
     const brake = a < 0 ? Math.max(0, Math.min(1, a / this.accelForFullBrake)) : 0;
-    return { gas, brake, speedMs: this.speedMs, gpsFresh: this.gpsFresh };
+    return { gas, brake, speedMs: this.speedMs, gpsFresh: this.gpsFresh, gpsFixIntervalS: this.gpsFixIntervalS };
   }
 }

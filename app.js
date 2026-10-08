@@ -29,6 +29,7 @@ const motionHint = document.getElementById("motionHint");
 const startBtn = document.getElementById("startBtn");
 const stopBtn = document.getElementById("stopBtn");
 const statusEl = document.getElementById("status");
+const wakeLockStatusEl = document.getElementById("wakeLockStatus");
 const masterVol = document.getElementById("masterVol");
 const masterVolVal = document.getElementById("masterVolVal");
 const debugEl = document.getElementById("debug");
@@ -299,24 +300,68 @@ let lastTime = performance.now();
 let inputMode = "manual"; // 'manual' | 'auto'
 const motion = new MotionInput();
 let wakeLock = null;
+let wakeLockPulse = null; // periodic defensive re-check while running
 
 stopBtn.disabled = true;
 
+function setWakeLockStatus(text) {
+  if (wakeLockStatusEl) wakeLockStatusEl.textContent = text ? `screen wake lock: ${text}` : "";
+}
+
 async function requestWakeLock() {
-  if (!("wakeLock" in navigator)) return;
+  if (!("wakeLock" in navigator)) {
+    setWakeLockStatus("unsupported on this browser — screen may sleep");
+    return;
+  }
   try {
     wakeLock = await navigator.wakeLock.request("screen");
+    setWakeLockStatus("active");
+    // The sentinel can be released for reasons that have nothing to do with
+    // our own stop()/visibilitychange handling — battery saver, memory
+    // pressure, or no reason the API surfaces at all. Without listening for
+    // this, a silently-dropped lock left `wakeLock` non-null, which blocked
+    // the visibilitychange re-acquisition check below from ever firing
+    // again — exactly the "screen just sleeps anyway" symptom reported from
+    // actual road testing, with iOS 18.4+ (where the older standalone-PWA
+    // WakeLock bug is already fixed) ruled out separately.
+    wakeLock.addEventListener("release", () => {
+      wakeLock = null;
+      if (state !== "off" && document.visibilityState === "visible") {
+        setWakeLockStatus("lost — reacquiring…");
+        requestWakeLock();
+      } else {
+        setWakeLockStatus("released");
+      }
+    });
   } catch (e) {
-    wakeLock = null; // not fatal — e.g. low battery mode can refuse this
+    wakeLock = null;
+    setWakeLockStatus(`failed (${e.name || "error"}) — screen may sleep`);
   }
 }
+
 document.addEventListener("visibilitychange", () => {
-  // Wake locks are released whenever the tab is hidden; re-acquire if the
-  // engine is still meant to be running when it becomes visible again.
+  // Wake locks are always released when a tab is hidden (spec behaviour,
+  // not a bug) — re-acquire if the engine is still meant to be running
+  // when it becomes visible again.
   if (document.visibilityState === "visible" && state !== "off" && !wakeLock) {
     requestWakeLock();
   }
 });
+
+function startWakeLockPulse() {
+  stopWakeLockPulse();
+  // Belt-and-suspenders: re-check periodically in case something releases
+  // the lock without the 'release' event firing for whatever reason, or
+  // without a visibilitychange happening either. Cheap and a no-op if the
+  // lock is already held.
+  wakeLockPulse = setInterval(() => {
+    if (state !== "off" && !wakeLock && document.visibilityState === "visible") requestWakeLock();
+  }, 20000);
+}
+function stopWakeLockPulse() {
+  if (wakeLockPulse) clearInterval(wakeLockPulse);
+  wakeLockPulse = null;
+}
 
 enableMotionBtn.addEventListener("click", async () => {
   if (!motion.supported.geolocation && !motion.supported.motion) {
@@ -349,7 +394,18 @@ inputModeBtn.addEventListener("click", () => {
 });
 
 function ensureContext() {
-  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (!ctx) {
+    // 'interactive' is already the Web Audio API's own default — explicit
+    // here so it's not silently relying on a default that could differ
+    // across browsers, and so it's documented: this is the browser's own
+    // output buffer, and it CANNOT reduce Bluetooth's transport latency,
+    // which is a physical/protocol characteristic of the Bluetooth link
+    // itself (confirmed via research: ~150-300ms is typical even for a
+    // good link; this app's own contribution is baseLatency, visible in
+    // the debug panel below).
+    const Ctor = window.AudioContext || window.webkitAudioContext;
+    ctx = new Ctor({ latencyHint: "interactive" });
+  }
   return ctx;
 }
 
@@ -485,6 +541,15 @@ function reportTelemetry(s) {
         shiftPhase: s.shiftPhase,
         gearRatio: Math.round(s.gearRatio * 1000) / 1000,
         gearRatios: s.gearRatios,
+        // Diagnostics for perceived-lag reports: lets "is this GPS update
+        // rate or audio/Bluetooth output latency" be measured directly
+        // instead of guessed at. gpsFixIntervalS ~1s is the GPS chip's own
+        // update cadence, not fixable from here; baseLatency is this app's
+        // own contribution and should be small (tens of ms) — a much
+        // bigger real-world gap than that points at the Bluetooth link.
+        gpsFixIntervalS: motion.gpsFixIntervalS != null ? Math.round(motion.gpsFixIntervalS * 100) / 100 : null,
+        audioBaseLatencyMs: ctx ? Math.round(ctx.baseLatency * 1000) : null,
+        audioOutputLatencyMs: ctx && ctx.outputLatency != null ? Math.round(ctx.outputLatency * 1000) : null,
       },
       null,
       1
@@ -547,6 +612,7 @@ startBtn.addEventListener("pointerdown", async (e) => {
   crankThrottle = 0;
   statusEl.textContent = "cranking…";
   requestWakeLock();
+  startWakeLockPulse();
 
   const audioCtx = ensureContext();
   if (audioCtx.state === "suspended") await audioCtx.resume();
@@ -599,8 +665,10 @@ function releaseStart() {
   if (sim) sim.stop();
   state = "off";
   statusEl.textContent = "engine off — released before it caught";
+  stopWakeLockPulse();
   if (wakeLock) wakeLock.release().catch(() => {});
   wakeLock = null;
+  setWakeLockStatus("");
 }
 ["pointerup", "pointerleave", "pointercancel"].forEach((evt) =>
   startBtn.addEventListener(evt, releaseStart)
@@ -619,8 +687,10 @@ stopBtn.addEventListener("click", () => {
   gearValue.textContent = "N";
   speedValue.textContent = "0";
   loadValue.textContent = "0%";
+  stopWakeLockPulse();
   if (wakeLock) wakeLock.release().catch(() => {});
   wakeLock = null;
+  setWakeLockStatus("");
 });
 
 engineSelect.addEventListener("change", () => {
