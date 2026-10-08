@@ -950,11 +950,27 @@ export class EngineSim {
       // hand-written. A dashboard drawing a boost gauge has to ask this, not
       // ENGINE_PROFILES.
       turbo: !!this.profile.turbo,
+      // Actual gauge pressure, bar: boost (0..1 of the turbo's own max) scaled
+      // to real units, plus a cosmetic manifold-vacuum reading off-boost (closed
+      // throttle, no boost) so the needle rests below zero like a real boost
+      // gauge instead of pinning at 0 — not fed back into the torque model,
+      // which already has its own boost-vs-throttle relationship; this is
+      // purely what the gauge shows.
+      boostBar: this.profile.turbo
+        ? s.boost * this.profile.turbo.maxBoost - (1 - s.throttle) * (1 - s.boost) * 0.8
+        : 0,
+      turboMaxBoost: this.profile.turbo ? this.profile.turbo.maxBoost : 0,
       preset: this.presetId,
       vehicle: this.vehicleId,
       vehicleLabel: this.vehicle.label,
       gearbox: this.vehicle.gearbox,
       gearRatios: this.geared.gearRatios.slice(),
+      // The design's drag-limited (or calibration-overridden) top speed, for
+      // a dashboard laying out a speedometer scale — see gearbox.js. Only
+      // defined when the gearbox was actually designed (not `gearing:
+      // 'stock'`, which keeps the vehicle preset's own fixed ratio table and
+      // never computes one).
+      topSpeedKmh: this.geared.topSpeed ? this.geared.topSpeed * 3.6 : undefined,
       auto: this.physics.shift ? this.physics.shift.autoShift : true,
       perspective: this._perspective,
       volume: this._volume,
@@ -1015,6 +1031,7 @@ export class EngineSim {
       label: p.label,
       cylinders: p.cylinders,
       turbo: !!p.turbo,
+      turboMaxBoost: p.turbo ? p.turbo.maxBoost : 0,
       idleRpm: p.idleRpm,
       redlineRpm: p.redlineRpm,
       peakTorque: p.peakTorque,
@@ -1032,6 +1049,20 @@ export class EngineSim {
       gearbox: v.gearbox,
       finalDrive: v.finalDrive,
     }));
+  }
+
+  /**
+   * Design the gearbox for an engine/vehicle pairing without building a sim
+   * — static, no AudioContext needed. Lets a dashboard preview (redline,
+   * gear count, top speed) update the instant the user picks an engine or
+   * vehicle, rather than waiting for the engine to actually start.
+   * `tuning` is the same `{ gears, topSpeedKmh }` setGearboxTuning() takes.
+   */
+  static designGearbox(engineId, vehicleId, tuning) {
+    const engine = ENGINE_PROFILES[engineId];
+    const vehicle = VEHICLE_PRESETS[vehicleId];
+    if (!engine || !vehicle) return null;
+    return gearVehicle(engine, vehicle, tuning || undefined);
   }
 
   // =========================================================================

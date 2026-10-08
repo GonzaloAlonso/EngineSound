@@ -119,5 +119,5 @@ export function designGearbox(engine, vehicle, opts = {}) {
 /** `vehicle` with its gearbox redesigned for `engine`; the preset is untouched. */
 export function gearVehicle(engine, vehicle, opts) {
   const d = designGearbox(engine, vehicle, opts);
-  return { ...vehicle, gearRatios: d.gearRatios, gearTeeth: d.gearTeeth };
+  return { ...vehicle, gearRatios: d.gearRatios, gearTeeth: d.gearTeeth, topSpeed: d.topSpeed };
 }

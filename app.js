@@ -2,6 +2,7 @@ import { EngineSim } from "./src/engine-sim.js";
 import { StarterSound } from "./starter.js";
 import { MotionInput } from "./motion.js";
 import { VEHICLE_PRESET_GROUPS } from "./vehicle-presets.js";
+import { GaugeCluster } from "./src/gauges.js";
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
@@ -13,9 +14,6 @@ if ("serviceWorker" in navigator) {
 
 const engineSelect = document.getElementById("engineSelect");
 const vehicleSelect = document.getElementById("vehicleSelect");
-const rpmValue = document.getElementById("rpmValue");
-const gearValue = document.getElementById("gearValue");
-const speedValue = document.getElementById("speedValue");
 const loadValue = document.getElementById("loadValue");
 const gasPedal = document.getElementById("gasPedal");
 const brakePedal = document.getElementById("brakePedal");
@@ -42,6 +40,18 @@ const zeroToHundredInput = document.getElementById("zeroToHundredInput");
 const applyGearboxBtn = document.getElementById("applyGearboxBtn");
 const resetGearboxBtn = document.getElementById("resetGearboxBtn");
 const gearboxHint = document.getElementById("gearboxHint");
+
+// WebGL availability varies by device/browser (old webviews, software
+// fallbacks that refuse a context) — the rest of the app (pedals, sound,
+// shifting) has nothing to do with the dashboard and must survive its
+// absence, so a failure here is caught rather than left to take the whole
+// module down.
+let gauges = null;
+try {
+  gauges = new GaugeCluster(document.getElementById("gaugeCluster"));
+} catch (e) {
+  console.warn("[app] 3D gauge cluster unavailable", e);
+}
 
 const VEHICLE_PRESETS_BY_ID = Object.fromEntries(
   VEHICLE_PRESET_GROUPS.flatMap((g) => g.vehicles).map((v) => [v.id, v])
@@ -157,6 +167,38 @@ vehicleSelect.value = "sports";
 
 const ENGINE_META = Object.fromEntries(EngineSim.engines().map((e) => [e.id, e]));
 
+/**
+ * Rescales the gauge dials to the currently-selected engine/vehicle: idle
+ * and redline come from the engine profile, top speed from the live
+ * drivetrain once one exists (it depends on the gearbox design, which in
+ * turn depends on the vehicle AND any real-car calibration applied — see
+ * applyVehicleCalibration()), or just the engine profile before that.
+ */
+function calibrateGauges() {
+  if (!gauges) return;
+  const meta = ENGINE_META[engineSelect.value] || {};
+  const s = sim ? sim.getState() : null;
+  // Before the engine's running there's no live Drivetrain to ask for the
+  // designed top speed — but the design only depends on the engine/vehicle
+  // pairing (and any real-car calibration already typed in), so it can be
+  // computed the same way setGearboxTuning() does, without building a sim.
+  // Otherwise the speedometer scale would only update on the NEXT start,
+  // not the moment you pick an engine or vehicle — surprising, since every
+  // other dial-face detail (redline, gear count) already updates live.
+  let topSpeedKmh = s ? s.topSpeedKmh : undefined;
+  if (topSpeedKmh == null) {
+    const geared = EngineSim.designGearbox(engineSelect.value, vehicleSelect.value, currentGearboxTuning());
+    if (geared && geared.topSpeed) topSpeedKmh = geared.topSpeed * 3.6;
+  }
+  gauges.calibrate({
+    idleRpm: s ? s.idle : meta.idleRpm,
+    redlineRpm: s ? s.redline : meta.redlineRpm,
+    topSpeedKmh,
+    turbo: s ? s.turbo : !!meta.turbo,
+    turboMaxBoost: s ? s.turboMaxBoost : meta.turboMaxBoost || 0,
+  });
+}
+
 // Upstream's engineInertia already rises with displacement/cylinder count,
 // but the NET effect (accel = torque/inertia) still left small engines
 // spinning up roughly as fast as the big ones here — not what was wanted:
@@ -199,7 +241,11 @@ function applyVehicleCalibration() {
   motion.setPerformanceCalibration({ zeroToHundredS });
 
   if (!sim) {
-    gearboxHint.textContent = zeroToHundredS
+    calibrateGauges(); // no live Drivetrain yet, but the dial faces can still preview the calibration
+    const tuning = currentGearboxTuning();
+    gearboxHint.textContent = tuning
+      ? "gauge preview updated — full gearbox applies once the engine's started"
+      : zeroToHundredS
       ? `0-100 load curve set (${zeroToHundredS}s) — gearbox applies once the engine's started`
       : "";
     return;
@@ -216,6 +262,7 @@ function applyVehicleCalibration() {
   }
   bits.push(zeroToHundredS ? `0-100 load curve: ${zeroToHundredS}s` : "load curve: flat estimate");
   gearboxHint.textContent = `applied — ${bits.join(", ")}`;
+  calibrateGauges();
 }
 
 applyGearboxBtn.addEventListener("click", applyVehicleCalibration);
@@ -294,6 +341,7 @@ function forceRpm(rpm) {
 
 let ctx = null;
 let sim = null;
+calibrateGauges(); // scale the dials to the default engine/vehicle before any start press
 let starter = null;
 let state = "off"; // 'off' | 'cranking' | 'running'
 let crankTimer = null;
@@ -565,9 +613,7 @@ function frame(now) {
 }
 
 function reportTelemetry(s) {
-  rpmValue.textContent = Math.round(s.rpm);
-  gearValue.textContent = s.gear === 0 ? "N" : s.gear;
-  speedValue.textContent = Math.round(s.speedKmh);
+  if (gauges) gauges.update({ ...s, cranking: state === "cranking" });
   loadValue.textContent = `${Math.round(s.load * 100)}%`;
 
   if (debugEl.closest("details").open) {
@@ -681,6 +727,7 @@ startBtn.addEventListener("pointerdown", async (e) => {
   sim.forceNeutral();
   belowIdleS = 0;
   gearEngageUntil = 0;
+  if (gauges) gauges.bulbCheck();
 
   // Below-idle cranking state: the starter is turning a dead engine over
   // from a dead stop, not yet running on its own. Reset the flare's cold-
@@ -739,9 +786,7 @@ function stopEngine(statusText) {
   startBtn.disabled = false;
   stopBtn.disabled = true;
   statusEl.textContent = statusText;
-  rpmValue.textContent = "0";
-  gearValue.textContent = "N";
-  speedValue.textContent = "0";
+  if (gauges) gauges.reset();
   loadValue.textContent = "0%";
   stopWakeLockPulse();
   if (wakeLock) wakeLock.release().catch(() => {});
@@ -752,14 +797,22 @@ function stopEngine(statusText) {
 stopBtn.addEventListener("click", () => stopEngine("engine off"));
 
 engineSelect.addEventListener("change", () => {
-  if (!sim) return; // not built yet — next crank will pick up the selection
+  if (!sim) {
+    calibrateGauges(); // not built yet — next crank will pick up the selection, but the dial face can update now
+    return;
+  }
   sim.setEngineType(engineSelect.value);
   applyInertiaTuning();
+  calibrateGauges();
   if (state === "running") statusEl.textContent = `running — ${engineSelect.value} / ${vehicleSelect.value}`;
 });
 vehicleSelect.addEventListener("change", () => {
-  if (!sim) return;
+  if (!sim) {
+    calibrateGauges(); // not built yet — next crank will pick up the selection, but the dial face can update now
+    return;
+  }
   sim.setVehicle(vehicleSelect.value);
+  calibrateGauges();
   if (state === "running") statusEl.textContent = `running — ${engineSelect.value} / ${vehicleSelect.value}`;
 });
 

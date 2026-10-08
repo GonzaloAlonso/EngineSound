@@ -2,7 +2,7 @@
 
 // App-shell cache so this still works through a dead cellular patch (tunnel,
 // parking garage) — bump CACHE_NAME on any deploy that changes these files.
-const CACHE_NAME = "teslasound-v1";
+const CACHE_NAME = "teslasound-v3";
 const PRECACHE = [
   "./",
   "index.html",
@@ -17,6 +17,7 @@ const PRECACHE = [
   "src/engine-sim.js",
   "src/fx.js",
   "src/gate.js",
+  "src/gauges.js",
   "src/gearbox.js",
   "src/inputs.js",
   "src/layers.js",
@@ -26,6 +27,7 @@ const PRECACHE = [
   "src/pulse.js",
   "src/resonators.js",
   "src/shift.js",
+  "vendor/three/three.module.min.js",
 ];
 
 self.addEventListener("install", (event) => {

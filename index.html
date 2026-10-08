@@ -36,24 +36,16 @@
     padding: 20px 24px;
     margin-bottom: 20px;
   }
-  .rpm-readout {
-    font-size: 3rem;
-    font-weight: 700;
-    font-variant-numeric: tabular-nums;
-    text-align: center;
-    margin: 0;
+  .gauge-cluster {
+    width: 100%;
+    aspect-ratio: 2.3 / 1;
+    border-radius: 10px;
+    overflow: hidden;
+    background: radial-gradient(ellipse at center, #1b1e22 0%, #0a0c0e 70%);
   }
-  .rpm-readout span { font-size: 1.1rem; color: #888; font-weight: 400; }
-  .telemetry {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 8px;
-    margin: 12px 0 0;
-    text-align: center;
-    font-size: 0.8rem;
-    color: #999;
-  }
-  .telemetry b { display: block; font-size: 1.1rem; color: #e8e8e8; font-variant-numeric: tabular-nums; }
+  .gauge-cluster canvas { width: 100%; height: 100%; display: block; }
+  .loadRow { text-align: center; font-size: 0.8rem; color: #999; margin: 10px 0 0; }
+  .loadRow b { color: #e8e8e8; font-variant-numeric: tabular-nums; }
   label { display: block; margin: 18px 0 6px; font-size: 0.85rem; color: #aaa; }
   select, input[type="range"] { width: 100%; accent-color: #e63946; }
   select, input[type="number"] {
@@ -93,12 +85,8 @@
   <p class="sub">Physical-modeling combustion engine sound (adapted from Engine_Sim — firing-geometry synthesis + simulated drivetrain). Drive it with on-screen pedals, or your phone's GPS + motion for real driving.</p>
 
   <div class="panel">
-    <p class="rpm-readout"><span id="rpmValue">0</span><span> RPM</span></p>
-    <div class="telemetry">
-      <div><b id="gearValue">N</b>gear</div>
-      <div><b id="speedValue">0</b>km/h</div>
-      <div><b id="loadValue">0%</b>load</div>
-    </div>
+    <div class="gauge-cluster" id="gaugeCluster"></div>
+    <p class="loadRow"><b id="loadValue">0%</b> throttle load</p>
 
     <label for="engineSelect">Engine</label>
     <select id="engineSelect"></select>
